@@ -1,0 +1,15 @@
+# Jeopardy dataset (downloaded by scripts/download-dataset.sh)
+data/
+
+# Local environment overrides
+.env
+docker-compose.override.yml
+
+# Local Claude Code config (personal permissions, etc.)
+.claude/
+
+# OS / editor
+.DS_Store
+.idea/
+.vscode/
+*.swp
