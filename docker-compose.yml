@@ -1,0 +1,23 @@
+services:
+  db:
+    image: postgres:17-alpine
+    container_name: jeopardy-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: jeopardy
+      POSTGRES_USER: jeopardy
+      POSTGRES_PASSWORD: jeopardy
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./db:/docker-entrypoint-initdb.d:ro
+      - ./data:/data:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U jeopardy -d jeopardy"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+volumes:
+  pgdata:
