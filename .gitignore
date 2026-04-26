@@ -5,6 +5,12 @@ data/
 .env
 docker-compose.override.yml
 
+# Node
+node_modules/
+dist/
+.vite/
+*.tsbuildinfo
+
 # Local Claude Code config (personal permissions, etc.)
 .claude/
 
