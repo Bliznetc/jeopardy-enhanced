@@ -1,50 +1,123 @@
-# Jeopardy DB
+# Jeopardy
 
-Local Postgres preloaded with ~530k Jeopardy! clues from the
-[jwolle1/jeopardy_clue_dataset](https://github.com/jwolle1/jeopardy_clue_dataset)
-(Seasons 1–41, 1984–2025).
+Multiplayer online Jeopardy! for 2–4 contestants plus a human host. Each game pulls a real, random aired episode (Seasons 1–41) from a Postgres database of ~530k clues sourced from [J! Archive](https://j-archive.com).
+
+## Stack
+
+- **DB:** Postgres 17 in Docker, preloaded from the
+  [jwolle1/jeopardy_clue_dataset](https://github.com/jwolle1/jeopardy_clue_dataset)
+- **Server:** Node + TypeScript, Fastify + Socket.IO
+- **Client:** React + Vite + TypeScript + Socket.IO client
+- **Shared:** TypeScript event contract in [shared/protocol.ts](shared/protocol.ts), used by both server and client
 
 ## Setup
 
-Requires Docker and `curl`.
+Requires Docker, Node 20+ (or 22+), and `curl`.
 
 ```sh
 ./scripts/download-dataset.sh   # ~77 MB → ./data/ (gitignored)
-docker compose up -d            # Postgres on localhost:5432
+docker compose up -d            # Postgres on localhost:5432, auto-loads the dataset
+npm run install:all             # installs root + server + client deps
+npm run dev                     # boots server (3001) + client (5173) together
 ```
 
-First boot takes ~10–30 s while the TSV loads. Watch with `docker compose logs -f db`.
+Open <http://localhost:5173> in 3+ tabs (or browsers): one host + 2–4 contestants.
 
-## Query
+## How to play
+
+1. **Host** clicks "Create room", picks a name. They become the judge.
+2. **Contestants** open the page, enter the 4-letter room code and a name, click "Join".
+3. Once 2–4 contestants are in, the host clicks "Start game" — the server picks a random valid episode.
+4. The current **picker** clicks a `$X CATEGORY` cell on the board.
+5. Host reads the clue aloud, then clicks "Arm buzzers".
+6. Contestants race to buzz (large red button, also bound to spacebar).
+7. The first to buzz types their response. The host clicks ✓ or ✗.
+   - ✓: that contestant is now the picker; +value to their score.
+   - ✗: −value, locked out for the rest of this clue; remaining contestants can buzz.
+   - All wrong / 5-second silence: the correct response is shown, host clicks "Next clue".
+8. **Daily Doubles** (1 in R1, 2 in R2): only the picker plays. They wager between $5 and `max(score, round_max)`, then answer.
+9. After all 30 R1 clues clear, host advances to **Double Jeopardy**.
+10. After R2: **Final Jeopardy**. Eligible contestants (score > 0) secretly wager 0..score, then secretly type their response. Host advances reveals in ascending score order, judging each.
+11. Game over → host can start another with the same lobby.
+
+## Database
+
+A single table, `clues`, with all 529,939 clues:
+
+| column               | notes                                                |
+|----------------------|------------------------------------------------------|
+| `id`                 | bigserial PK                                         |
+| `round`              | 1=Single, 2=Double, 3=Final                          |
+| `clue_value`         | board-position value ($100, $200, … or modern $200…$1000) |
+| `daily_double_value` | wager amount; **0 = not a DD, > 0 = DD**             |
+| `category`           |                                                      |
+| `answer`             | the clue shown to contestants                        |
+| `question`           | the response contestants must give                   |
+| `air_date`           | episodes are identified by air_date                  |
+
+Quick query: `./scripts/psql.sh -c "SELECT COUNT(*) FROM clues"`.
+
+## Layout
+
+```
+PP2/
+├── docker-compose.yml          # Postgres service
+├── db/                          # schema + load script (run once on first DB boot)
+├── data/                        # downloaded TSV (gitignored)
+├── scripts/                     # helpers
+│   ├── download-dataset.sh
+│   └── psql.sh
+├── shared/protocol.ts           # socket event contract — single source of truth
+├── server/
+│   ├── src/
+│   │   ├── index.ts             # Fastify + Socket.IO bootstrap
+│   │   ├── routes.ts            # GET /health, GET /api/episode
+│   │   ├── db.ts                # pg pool
+│   │   ├── episode.ts           # loadRandomEpisode()
+│   │   ├── rooms.ts             # Room + RoomRegistry (lobby state)
+│   │   ├── game/
+│   │   │   ├── machine.ts       # the Game FSM (the heart of correctness)
+│   │   │   └── scoring.ts       # pure scoring helpers (DD/FJ wager bounds, etc.)
+│   │   └── socket/handlers.ts   # one handler per client event
+│   └── test/
+│       ├── fixtures.ts          # synthetic episode for FSM tests
+│       ├── episode.test.ts      # exercises the real DB
+│       ├── integration.test.ts  # lobby flow over real sockets
+│       └── smoke-game.mjs       # standalone end-to-end script (see below)
+└── client/
+    └── src/
+        ├── App.tsx              # routes by phase
+        ├── socket.ts            # singleton socket.io client
+        ├── pages/{Home,Lobby,ContestantGame,HostGame}.tsx
+        └── components/{Board,ClueCard,Buzzer,ScorePanel,HostJudge,WagerInput,AnswerInput}.tsx
+```
+
+## Tests
 
 ```sh
-./scripts/psql.sh                                 # interactive shell
-./scripts/psql.sh -c "SELECT COUNT(*) FROM clues" # one-off query
-./scripts/psql.sh -f some_query.sql               # run a file
+npm test                    # all server tests (68: unit + integration + DB)
+npm run typecheck            # server + client TypeScript
+npm --prefix client run build  # client production build
 ```
 
-Or connect from any client: `postgresql://jeopardy:jeopardy@localhost:5432/jeopardy`.
+For an end-to-end check that the live wire protocol works (server must be running):
 
-## Reset
+```sh
+npm run dev                                  # in one terminal
+node server/test/smoke-game.mjs              # in another — drives a full game
+```
 
-The init scripts only run on a fresh volume. To reload:
+## Reset the database
+
+The init scripts only run on a fresh volume. To reload from scratch:
 
 ```sh
 docker compose down -v && docker compose up -d
 ```
 
-## Schema
+## Connect a SQL client directly
 
-One table, `clues`:
-
-| column                                       | notes                                       |
-|----------------------------------------------|---------------------------------------------|
-| `id`                                         | bigserial PK                                |
-| `round`                                      | 1=Single, 2=Double, 3=Final                 |
-| `clue_value`, `daily_double_value`           | int, nullable                               |
-| `category`, `comments`, `notes`              | text                                        |
-| `answer`                                     | the clue shown to contestants               |
-| `question`                                   | the response contestants must give          |
-| `air_date`                                   | date                                        |
-
-Indexes on `round`, `category`, `air_date`.
+```
+postgresql://jeopardy:jeopardy@localhost:5432/jeopardy
+```
+or `./scripts/psql.sh` (uses the container's own psql).
