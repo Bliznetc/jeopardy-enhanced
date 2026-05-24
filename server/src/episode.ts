@@ -54,6 +54,91 @@ const FETCH_BY_DATE_SQL = `
   ORDER BY round, category, clue_value;
 `;
 
+export async function getTopCategories(year: number | null): Promise<string[]> {
+  if (year !== null) {
+    const r = await pool.query<{ category: string }>(
+      `SELECT category
+       FROM clues
+       WHERE round IN (1, 2) AND EXTRACT(YEAR FROM air_date) = $1
+       GROUP BY category
+       ORDER BY COUNT(DISTINCT air_date) DESC, category
+       LIMIT 250`,
+      [year]
+    );
+    return r.rows.map((r) => r.category);
+  }
+  const r = await pool.query<{ category: string }>(
+    `SELECT category
+     FROM clues
+     WHERE round IN (1, 2)
+     GROUP BY category
+     ORDER BY COUNT(DISTINCT air_date) DESC, category
+     LIMIT 250`
+  );
+  return r.rows.map((r) => r.category);
+}
+
+export interface EpisodeSearchResult {
+  airDate: string;
+  categories: string[];
+}
+
+export async function searchEpisodes(
+  keyword: string,
+  year: number | null
+): Promise<EpisodeSearchResult[]> {
+  const pattern = `%${keyword.replace(/[%_]/g, '\\$&')}%`;
+  let dateRows: { air_date: string }[];
+
+  if (year !== null) {
+    const r = await pool.query<{ air_date: string }>(
+      `SELECT DISTINCT air_date::text AS air_date
+       FROM clues
+       WHERE round IN (1, 2)
+         AND UPPER(category) LIKE UPPER($1)
+         AND EXTRACT(YEAR FROM air_date) = $2
+       ORDER BY air_date DESC
+       LIMIT 20`,
+      [pattern, year]
+    );
+    dateRows = r.rows;
+  } else {
+    const r = await pool.query<{ air_date: string }>(
+      `SELECT DISTINCT air_date::text AS air_date
+       FROM clues
+       WHERE round IN (1, 2)
+         AND UPPER(category) LIKE UPPER($1)
+       ORDER BY air_date DESC
+       LIMIT 20`,
+      [pattern]
+    );
+    dateRows = r.rows;
+  }
+
+  if (dateRows.length === 0) return [];
+
+  const dates = dateRows.map((r) => r.air_date);
+  const catResult = await pool.query<{ air_date: string; category: string }>(
+    `SELECT air_date::text AS air_date, category
+     FROM clues
+     WHERE round IN (1, 2) AND air_date::text = ANY($1)
+     GROUP BY air_date, category
+     ORDER BY air_date DESC, category`,
+    [dates]
+  );
+
+  const byDate = new Map<string, string[]>();
+  for (const row of catResult.rows) {
+    const list = byDate.get(row.air_date);
+    if (list) list.push(row.category);
+    else byDate.set(row.air_date, [row.category]);
+  }
+
+  return dates
+    .filter((d) => byDate.has(d))
+    .map((d) => ({ airDate: d, categories: byDate.get(d)! }));
+}
+
 export async function loadRandomEpisode(): Promise<Episode> {
   const pick = await pool.query<{ air_date: string }>(PICK_AIR_DATE_SQL);
   if (pick.rowCount === 0) {
