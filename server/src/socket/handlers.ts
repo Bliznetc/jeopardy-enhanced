@@ -4,7 +4,7 @@ import type {
   ServerToClientEvents,
 } from '../../../shared/protocol';
 import { RoomRegistry } from '../rooms';
-import { loadRandomEpisode } from '../episode';
+import { loadEpisodeByDate, loadRandomEpisode } from '../episode';
 
 export interface SocketData {
   code: string | null;
@@ -89,13 +89,18 @@ export function registerSocketHandlers(io: IO): RoomRegistry {
 
     // ----- Lobby -----
 
-    socket.on('create_room', ({ name }, ack) => {
+    socket.on('create_room', ({ name, autopilot = false }, ack) => {
       try {
-        const room = registry.create(socket.id, name);
-        room.onChange = broadcaster(room.code);
+        const room = registry.create(socket.id, name, autopilot, autopilot ? loadRandomEpisode : undefined);
+        room.onBroadcast = broadcaster(room.code);
         socket.join(`room:${room.code}`);
-        socket.join(`host:${room.code}`);
         socket.data.code = room.code;
+        if (autopilot) {
+          // Creator joins as contestant; autopilot bot is the virtual host
+          room.addContestant(socket.id, name);
+        } else {
+          socket.join(`host:${room.code}`);
+        }
         ack({ ok: true, data: { code: room.code, playerId: socket.id } });
         room.onChange();
       } catch (e) {
@@ -117,21 +122,37 @@ export function registerSocketHandlers(io: IO): RoomRegistry {
       }
     });
 
-    socket.on('start_game', async ({ code }, ack) => {
+    socket.on('start_game', async ({ code, airDate }, ack) => {
       try {
         const room = registry.get(code);
-        // Pre-flight checks before the (async) DB call.
+        if (room.autopilot) throw new Error('Autopilot manages this room');
         if (socket.id !== room.hostId) throw new Error('Only the host can start the game');
         if (room.game) throw new Error('Game already started');
         if (room.contestants().length < 2) throw new Error('Need at least 2 contestants');
 
-        const episode = await loadRandomEpisode();
+        const episode = airDate ? await loadEpisodeByDate(airDate) : await loadRandomEpisode();
         room.startGame(socket.id, episode);
         ack({ ok: true, data: undefined });
         room.onChange();
       } catch (e) {
         ack({ ok: false, error: (e as Error).message });
       }
+    });
+
+    socket.on('set_episode_selection', ({ code, airDate, categories = [] }, ack) => {
+      handle(socket, ack, () => {
+        const room = registry.get(code);
+        room.setSelectedEpisode(socket.id, airDate, categories);
+        room.onChange();
+      });
+    });
+
+    socket.on('player_ready', ({ code }, ack) => {
+      handle(socket, ack, () => {
+        const room = registry.get(code);
+        room.setReady(socket.id);
+        room.onChange();
+      });
     });
 
     socket.on('restart_game', ({ code }, ack) => {

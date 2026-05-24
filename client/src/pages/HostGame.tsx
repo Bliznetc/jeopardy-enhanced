@@ -4,6 +4,7 @@ import Board from '../components/Board';
 import ClueCard from '../components/ClueCard';
 import ScorePanel from '../components/ScorePanel';
 import HostJudge from '../components/HostJudge';
+import Timer from '../components/Timer';
 
 interface Props {
   room: RoomState;
@@ -99,6 +100,7 @@ export default function HostGame({ room, extras, me }: Props) {
             game={game}
             hostExtraResponse={extras?.currentClueResponse}
           />
+          <Timer endsAt={game.buzzTimerEndsAt} totalMs={10000} label="Time to buzz" />
           <div className="banner">Buzzers armed — waiting for buzz…</div>
         </>
       )}
@@ -109,6 +111,7 @@ export default function HostGame({ room, extras, me }: Props) {
             game={game}
             hostExtraResponse={extras?.currentClueResponse}
           />
+          <Timer endsAt={game.answerTimerEndsAt} totalMs={20000} label="Time to answer" />
           <div className="banner">
             {room.players.find((p) => p.id === (game.buzzedIn || game.ddPlayer))
               ?.name ?? 'Player'}{' '}
@@ -238,7 +241,10 @@ export default function HostGame({ room, extras, me }: Props) {
 
       {phase === 'game_over' && (
         <div className="game-over">
-          <h2>Game over</h2>
+          <div className="game-over-stars" aria-hidden>
+            {Array.from({ length: 12 }).map((_, i) => <span key={i} className="star" />)}
+          </div>
+          <h2>Game Over</h2>
           {game.winner && (
             <p>
               Winner:{' '}

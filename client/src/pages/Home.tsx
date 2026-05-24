@@ -10,11 +10,12 @@ interface Props {
 export default function Home({ setMe, setError }: Props) {
   const [name, setName] = useState('');
   const [code, setCode] = useState('');
+  const [autopilot, setAutopilot] = useState(false);
 
   function create() {
     const trimmed = name.trim();
     if (!trimmed) return setError('Enter a name');
-    socket.emit('create_room', { name: trimmed }, (res: AckResult<{ code: string; playerId: string }>) => {
+    socket.emit('create_room', { name: trimmed, autopilot }, (res: AckResult<{ code: string; playerId: string }>) => {
       if (!res.ok) return setError(res.error);
       setMe(res.data.playerId);
     });
@@ -50,7 +51,19 @@ export default function Home({ setMe, setError }: Props) {
       <div className="actions">
         <div className="card">
           <h2>Host a game</h2>
-          <p>You'll judge each answer. Game needs 2–4 contestants.</p>
+          <p>
+            {autopilot
+              ? 'Bot host judges answers automatically. Game starts when 2+ players join.'
+              : "You'll judge each answer. Game needs 2–4 contestants."}
+          </p>
+          <label className="autopilot-toggle">
+            <input
+              type="checkbox"
+              checked={autopilot}
+              onChange={(e) => setAutopilot(e.target.checked)}
+            />
+            Autopilot mode
+          </label>
           <button onClick={create} disabled={!name.trim()}>
             Create room
           </button>

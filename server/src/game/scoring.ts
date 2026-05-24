@@ -51,3 +51,19 @@ export function chooseInitialPicker(contestantIds: string[]): string {
 export function clueKey(round: number, category: string, value: number): string {
   return `${round}|${category}|${value}`;
 }
+
+export function fuzzyJudge(submitted: string, correct: string): boolean {
+  function normalize(s: string): string {
+    return s
+      .toLowerCase()
+      .replace(/^(what|who|where|when|which)\s+(is|are|was|were|did|do|does|has|have)\s+(the\s+|a\s+|an\s+)?/i, '')
+      .replace(/[^a-z0-9\s]/g, ' ')
+      .replace(/\b(the|a|an)\b/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+  }
+  const n1 = normalize(submitted);
+  const n2 = normalize(correct);
+  if (!n1 || n1.length < 2 || !n2 || n2.length < 2) return false;
+  return n1.includes(n2) || n2.includes(n1);
+}

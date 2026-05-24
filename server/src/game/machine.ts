@@ -15,8 +15,8 @@ import {
   isValidFJWager,
 } from './scoring';
 
-const BUZZ_WINDOW_MS = 5000;
-const ANSWER_WINDOW_MS = 7000;
+const BUZZ_WINDOW_MS = 10000;
+const ANSWER_WINDOW_MS = 20000;
 const FJ_ANSWER_WINDOW_MS = 30000;
 
 type Round = 1 | 2 | 3;
@@ -60,6 +60,9 @@ export class Game {
   fjPendingJudge: { playerId: string; wager: number; answer: string } | null = null;
 
   winner: string | null = null;
+
+  buzzTimerEndsAt: number | null = null;
+  answerTimerEndsAt: number | null = null;
 
   private buzzTimer: NodeJS.Timeout | null = null;
   private answerTimer: NodeJS.Timeout | null = null;
@@ -164,6 +167,7 @@ export class Game {
     this.phase = 'buzz_open';
     this.clearBuzzTimer();
     const window = this.opts.buzzWindowMs ?? BUZZ_WINDOW_MS;
+    this.buzzTimerEndsAt = Date.now() + window;
     this.buzzTimer = setTimeout(() => this.handleBuzzTimeout(), window);
     this.onChange();
   }
@@ -180,10 +184,10 @@ export class Game {
     this.phase = 'answering';
     this.clearBuzzTimer();
     this.clearAnswerTimer();
-    this.answerTimer = setTimeout(
-      () => this.handleAnswerTimeout(),
-      this.opts.answerWindowMs ?? ANSWER_WINDOW_MS
-    );
+    const answerWindow = this.opts.answerWindowMs ?? ANSWER_WINDOW_MS;
+    this.buzzTimerEndsAt = null;
+    this.answerTimerEndsAt = Date.now() + answerWindow;
+    this.answerTimer = setTimeout(() => this.handleAnswerTimeout(), answerWindow);
     this.onChange();
   }
 
@@ -242,6 +246,8 @@ export class Game {
         this.buzzersArmed = true;
         this.clearBuzzTimer();
         const window = this.opts.buzzWindowMs ?? BUZZ_WINDOW_MS;
+        this.answerTimerEndsAt = null;
+        this.buzzTimerEndsAt = Date.now() + window;
         this.buzzTimer = setTimeout(() => this.handleBuzzTimeout(), window);
       }
     }
@@ -265,6 +271,8 @@ export class Game {
     this.ddPlayer = null;
     this.ddWager = null;
     this.buzzersArmed = false;
+    this.buzzTimerEndsAt = null;
+    this.answerTimerEndsAt = null;
     this.clearBuzzTimer();
     this.clearAnswerTimer();
   }
@@ -358,10 +366,10 @@ export class Game {
       this.phase = 'answering';
       this.currentAnswerText = null;
       this.clearAnswerTimer();
-      this.answerTimer = setTimeout(
-        () => this.handleAnswerTimeout(),
-        this.opts.answerWindowMs ?? ANSWER_WINDOW_MS
-      );
+      const ddAnswerWindow = this.opts.answerWindowMs ?? ANSWER_WINDOW_MS;
+      this.buzzTimerEndsAt = null;
+      this.answerTimerEndsAt = Date.now() + ddAnswerWindow;
+      this.answerTimer = setTimeout(() => this.handleAnswerTimeout(), ddAnswerWindow);
       this.onChange();
       return;
     }
@@ -452,6 +460,7 @@ export class Game {
     this.markClueCleared();
     this.phase = 'clue_closed';
     this.buzzersArmed = false;
+    this.buzzTimerEndsAt = null;
     this.clearBuzzTimer();
     this.onChange();
   }
@@ -459,6 +468,7 @@ export class Game {
   private handleAnswerTimeout(): void {
     if (this.phase !== 'answering') return;
     this.currentAnswerText = '';
+    this.answerTimerEndsAt = null;
     this.phase = 'judging';
     this.onChange();
   }
@@ -543,6 +553,8 @@ export class Game {
       fjReveals: [...this.fjReveals],
       fjPending: this.fjPendingJudge,
       winner: this.winner,
+      buzzTimerEndsAt: this.buzzTimerEndsAt,
+      answerTimerEndsAt: this.answerTimerEndsAt,
     };
   }
 

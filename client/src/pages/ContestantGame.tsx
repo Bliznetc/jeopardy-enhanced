@@ -6,6 +6,7 @@ import Buzzer from '../components/Buzzer';
 import ScorePanel from '../components/ScorePanel';
 import WagerInput from '../components/WagerInput';
 import AnswerInput from '../components/AnswerInput';
+import Timer from '../components/Timer';
 
 interface Props {
   room: RoomState;
@@ -75,7 +76,10 @@ export default function ContestantGame({ room, me }: Props) {
       {(phase === 'show_board' || phase === 'between_rounds') && (
         <>
           {phase === 'between_rounds' && (
-            <div className="banner">Round {game.round} complete — waiting for host…</div>
+            <div className="banner">
+              Round {game.round} complete —{' '}
+              {room.autopilot ? 'next round starting shortly…' : 'waiting for host…'}
+            </div>
           )}
           {phase === 'show_board' && game.round !== 3 && (
             <Board
@@ -90,13 +94,16 @@ export default function ContestantGame({ room, me }: Props) {
       {phase === 'clue_reading' && (
         <>
           <ClueCard game={game} />
-          <div className="banner">Host is reading the clue…</div>
+          <div className="banner">
+            {room.autopilot ? 'Get ready…' : 'Host is reading the clue…'}
+          </div>
         </>
       )}
 
       {phase === 'buzz_open' && (
         <>
           <ClueCard game={game} />
+          <Timer endsAt={game.buzzTimerEndsAt} totalMs={10000} label="Time to buzz" />
           <Buzzer
             armed={game.buzzersArmed}
             lockedOut={isLocked}
@@ -109,6 +116,9 @@ export default function ContestantGame({ room, me }: Props) {
       {phase === 'answering' && (
         <>
           <ClueCard game={game} />
+          {(isBuzzed || isDDPicker) && (
+            <Timer endsAt={game.answerTimerEndsAt} totalMs={20000} label="Time to answer" />
+          )}
           {isBuzzed || isDDPicker ? (
             <AnswerInput onSubmit={submitAnswer} placeholder="Your response…" />
           ) : (
@@ -124,14 +134,18 @@ export default function ContestantGame({ room, me }: Props) {
       {phase === 'judging' && (
         <>
           <ClueCard game={game} />
-          <div className="banner">Host is judging the answer…</div>
+          <div className="banner">
+            {room.autopilot ? 'Checking answer…' : 'Host is judging the answer…'}
+          </div>
         </>
       )}
 
       {phase === 'clue_closed' && (
         <>
           <ClueCard game={game} />
-          <div className="banner">Waiting for the host to advance…</div>
+          <div className="banner">
+            {room.autopilot ? 'Moving on shortly…' : 'Waiting for the host to advance…'}
+          </div>
         </>
       )}
 
@@ -226,13 +240,18 @@ export default function ContestantGame({ room, me }: Props) {
               </li>
             )}
           </ul>
-          <div className="banner">Waiting for the host to advance reveals…</div>
+          <div className="banner">
+            {room.autopilot ? 'Revealing results…' : 'Waiting for the host to advance reveals…'}
+          </div>
         </div>
       )}
 
       {phase === 'game_over' && (
         <div className="game-over">
-          <h2>Game over</h2>
+          <div className="game-over-stars" aria-hidden>
+            {Array.from({ length: 12 }).map((_, i) => <span key={i} className="star" />)}
+          </div>
+          <h2>Game Over</h2>
           {game.winner && (
             <p>
               Winner:{' '}
@@ -240,6 +259,9 @@ export default function ContestantGame({ room, me }: Props) {
                 {room.players.find((p) => p.id === game.winner)?.name ?? '—'}
               </strong>
             </p>
+          )}
+          {room.autopilot && (
+            <p className="hint">New game starting shortly…</p>
           )}
         </div>
       )}
