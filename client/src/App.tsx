@@ -39,7 +39,7 @@ export default function App() {
 
   return (
     <main>
-      <h1>Jeopardy!</h1>
+      <h1>Jeopardy<span style={{ color: 'var(--gold)', WebkitTextFillColor: 'var(--gold)' }}>!</span></h1>
       {error && (
         <div className="error">
           {error}{' '}
