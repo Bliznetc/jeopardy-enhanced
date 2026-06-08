@@ -5,6 +5,16 @@ import type {
 } from '@shared/protocol';
 
 export const socket: Socket<ServerToClientEvents, ClientToServerEvents> = io({
-  autoConnect: true,
+  autoConnect: false,
   reconnection: true,
 });
+
+export function connectSocket(token: string) {
+  socket.auth = { token };
+  if (socket.connected) socket.disconnect();
+  socket.connect();
+}
+
+export function disconnectSocket() {
+  socket.disconnect();
+}

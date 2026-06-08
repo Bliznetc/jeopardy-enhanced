@@ -17,7 +17,7 @@ describe('generateCode', () => {
 describe('Room', () => {
   let room: Room;
   beforeEach(() => {
-    room = new Room('ABCD', 'host-id', 'Host');
+    room = new Room('ABCD', 'host-id', 'Host', 'host-id');
   });
 
   it('starts in lobby phase with the host present', () => {

@@ -6,8 +6,9 @@ import type {
   RoomState,
 } from '../../shared/protocol';
 import { Game } from './game/machine';
-import { fuzzyJudge } from './game/scoring';
+import { judgeAnswer } from './game/aiJudge';
 import { loadEpisodeByDate } from './episode';
+import { recordGameResult } from './auth/users';
 
 const ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; // no I, O, 0, 1
 const CODE_LENGTH = 4;
@@ -20,6 +21,7 @@ const AUTOPILOT_BETWEEN_MS = 4000;
 const AUTOPILOT_FJ_MS = 2000;
 const AUTOPILOT_RESTART_MS = 8000;
 const AUTOPILOT_START_DELAY_MS = 1500; // pause after all-ready before game starts
+const AUTOPILOT_JUDGE_MS = 700; // small "thinking" beat before the verdict
 
 export function generateCode(): string {
   let code = '';
@@ -43,6 +45,10 @@ export class Room {
   private autopilotTimer: NodeJS.Timeout | null = null;
   private autoStartTimer: NodeJS.Timeout | null = null;
   private readonly loadEpisode?: () => Promise<Episode>;
+
+  private online: Map<string, Set<string>> = new Map(); // userId -> socket ids
+  private graceTimers: Map<string, NodeJS.Timeout> = new Map();
+  private resultsRecorded = false;
 
   constructor(
     code: string,
@@ -70,7 +76,79 @@ export class Room {
 
   onChange(): void {
     this.onBroadcast();
+    if (this.game && this.game.phase === 'game_over' && !this.resultsRecorded) {
+      this.resultsRecorded = true;
+      this.recordResults();
+    }
     if (this.autopilot) this.triggerAutopilot();
+  }
+
+  // ----- Presence tracking (multi-socket aware) -----
+
+  hasPlayer(userId: string): boolean {
+    return this.players.has(userId) || userId === this.hostId;
+  }
+
+  attach(userId: string, socketId: string): void {
+    let set = this.online.get(userId);
+    if (!set) {
+      set = new Set();
+      this.online.set(userId, set);
+    }
+    set.add(socketId);
+    this.cancelPresenceGrace(userId);
+    this.setConnected(userId, true);
+  }
+
+  // Used when a known player returns (refresh / extra tab / reconnect).
+  reattach(userId: string, socketId: string): void {
+    this.attach(userId, socketId);
+  }
+
+  detach(userId: string, socketId: string): boolean {
+    const set = this.online.get(userId);
+    if (set) {
+      set.delete(socketId);
+      if (set.size === 0) this.online.delete(userId);
+    }
+    return !this.online.has(userId);
+  }
+
+  isOnline(userId: string): boolean {
+    return this.online.has(userId);
+  }
+
+  schedulePresenceGrace(userId: string, fn: () => void): void {
+    this.cancelPresenceGrace(userId);
+    const ms = Number(process.env.PRESENCE_GRACE_MS ?? 45000);
+    this.graceTimers.set(
+      userId,
+      setTimeout(() => {
+        this.graceTimers.delete(userId);
+        fn();
+      }, ms)
+    );
+  }
+
+  private cancelPresenceGrace(userId: string): void {
+    const t = this.graceTimers.get(userId);
+    if (t) {
+      clearTimeout(t);
+      this.graceTimers.delete(userId);
+    }
+  }
+
+  private recordResults(): void {
+    if (!this.game) return;
+    const winner = this.game.winner;
+    const results = this.contestants()
+      .map((c) => ({
+        userId: Number(c.id),
+        score: this.game!.scores.get(c.id) ?? 0,
+        won: c.id === winner,
+      }))
+      .filter((r) => Number.isFinite(r.userId)); // skip 'autopilot' & non-numeric ids
+    void recordGameResult(results); // fire-and-forget; never blocks the broadcast
   }
 
   get phase(): Phase {
@@ -119,6 +197,7 @@ export class Room {
     if (this.contestants().length < MIN_CONTESTANTS) {
       throw new Error(`Need at least ${MIN_CONTESTANTS} contestants`);
     }
+    this.resultsRecorded = false;
     this.game = new Game(episode, this.contestants(), () => this.onChange());
   }
 
@@ -169,11 +248,14 @@ export class Room {
     }
     this.readyPlayers.clear();
     this.selectedEpisode = null;
+    this.resultsRecorded = false;
   }
 
   cleanup(): void {
     if (this.autopilotTimer) { clearTimeout(this.autopilotTimer); this.autopilotTimer = null; }
     if (this.autoStartTimer) { clearTimeout(this.autoStartTimer); this.autoStartTimer = null; }
+    for (const t of this.graceTimers.values()) clearTimeout(t);
+    this.graceTimers.clear();
     if (this.game) this.game.cleanup();
   }
 
@@ -200,8 +282,11 @@ export class Room {
     } else if (phase === 'judging') {
       const submitted = game.currentAnswerText ?? '';
       const correct = game.currentClue?.correctResponse ?? '';
-      const isCorrect = fuzzyJudge(submitted, correct);
-      this.scheduleAutopilot(500, () => {
+      const clueText = game.currentClue?.clueText ?? '';
+      this.scheduleAutopilot(AUTOPILOT_JUDGE_MS, async () => {
+        const isCorrect = await judgeAnswer({ clueText, correctResponse: correct, submitted });
+        // Re-check: nothing else advances while autopilot awaits, but guard anyway.
+        if (!this.game || this.game.phase !== 'judging') return;
         this.judge('autopilot', isCorrect);
       });
 
@@ -219,8 +304,10 @@ export class Room {
       if (game.fjPendingJudge) {
         const { answer } = game.fjPendingJudge;
         const correct = game.episode.final.correctResponse;
-        const isCorrect = fuzzyJudge(answer, correct);
-        this.scheduleAutopilot(AUTOPILOT_FJ_MS, () => {
+        const clueText = game.episode.final.clueText;
+        this.scheduleAutopilot(AUTOPILOT_FJ_MS, async () => {
+          const isCorrect = await judgeAnswer({ clueText, correctResponse: correct, submitted: answer });
+          if (!this.game || !this.game.fjPendingJudge) return;
           this.judgeFinal('autopilot', isCorrect);
         });
       } else {

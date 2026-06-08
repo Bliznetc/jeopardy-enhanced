@@ -1,46 +1,27 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import Fastify, { type FastifyInstance } from 'fastify';
-import { Server as IOServer } from 'socket.io';
-import { io as ClientIO, type Socket as ClientSocket } from 'socket.io-client';
-import { registerSocketHandlers, type SocketData } from '../src/socket/handlers';
-import type {
-  ClientToServerEvents,
-  ServerToClientEvents,
-  RoomState,
-  AckResult,
-} from '../../shared/protocol';
+import type { RoomState, AckResult } from '../../shared/protocol';
+import {
+  type CSocket,
+  type TestServer,
+  type TestUser,
+  connectAuthed,
+  registerUser,
+  startTestServer,
+} from './authHelpers';
 
-let app: FastifyInstance;
+let server: TestServer;
 let port: number;
 
 beforeAll(async () => {
-  app = Fastify({ logger: false });
-  await app.listen({ port: 0, host: '127.0.0.1' });
-  const addr = app.server.address();
-  if (addr === null || typeof addr === 'string') throw new Error('no port');
-  port = addr.port;
-  const io = new IOServer<
-    ClientToServerEvents,
-    ServerToClientEvents,
-    Record<string, never>,
-    SocketData
-  >(app.server, { cors: { origin: true } });
-  registerSocketHandlers(io);
+  // Shorten the disconnect grace window so teardown assertions are fast.
+  process.env.PRESENCE_GRACE_MS = '100';
+  server = await startTestServer();
+  port = server.port;
 });
 
 afterAll(async () => {
-  await app.close();
+  await server.app.close();
 });
-
-type CSocket = ClientSocket<ServerToClientEvents, ClientToServerEvents>;
-
-function connect(): CSocket {
-  return ClientIO(`http://127.0.0.1:${port}`, {
-    transports: ['websocket'],
-    reconnection: false,
-    forceNew: true,
-  });
-}
 
 function awaitConnected(socket: CSocket): Promise<void> {
   return new Promise((resolve, reject) => {
@@ -52,21 +33,19 @@ function awaitConnected(socket: CSocket): Promise<void> {
 
 function emit<TArgs, TRes>(
   socket: CSocket,
-  event: keyof ClientToServerEvents,
+  event: string,
   data: TArgs
 ): Promise<TRes> {
   return new Promise((resolve) => {
-    // socket.io's typed emit signature is awkward across the test boundary
     (socket.emit as unknown as (e: string, d: TArgs, ack: (r: TRes) => void) => void)(
-      event as string,
+      event,
       data,
       resolve
     );
   });
 }
 
-// Latches every room_state so that .waitFor can check past states too —
-// avoids the race where a state event fires before the listener is registered.
+// Latches every room_state so .waitFor can check past states too.
 class StateWatcher {
   latest: RoomState | null = null;
   constructor(private socket: CSocket) {
@@ -74,10 +53,7 @@ class StateWatcher {
       this.latest = s;
     });
   }
-  waitFor(
-    predicate: (s: RoomState) => boolean,
-    timeoutMs = 3000
-  ): Promise<RoomState> {
+  waitFor(predicate: (s: RoomState) => boolean, timeoutMs = 3000): Promise<RoomState> {
     if (this.latest && predicate(this.latest)) {
       return Promise.resolve(this.latest);
     }
@@ -103,40 +79,46 @@ async function cleanup(...sockets: CSocket[]) {
   await new Promise((r) => setTimeout(r, 50));
 }
 
+async function trio(): Promise<{ host: TestUser; alice: TestUser; bob: TestUser }> {
+  const [host, alice, bob] = await Promise.all([
+    registerUser(port, 'host'),
+    registerUser(port, 'alice'),
+    registerUser(port, 'bob'),
+  ]);
+  return { host, alice, bob };
+}
+
 describe('lobby flow over real sockets', () => {
   it('full happy path: create → 2 joins → start', async () => {
-    const host = connect();
-    const alice = connect();
-    const bob = connect();
+    const u = await trio();
+    const host = connectAuthed(port, u.host.token);
+    const alice = connectAuthed(port, u.alice.token);
+    const bob = connectAuthed(port, u.bob.token);
 
     try {
-      await Promise.all([
-        awaitConnected(host),
-        awaitConnected(alice),
-        awaitConnected(bob),
-      ]);
+      await Promise.all([awaitConnected(host), awaitConnected(alice), awaitConnected(bob)]);
 
-      const created = await emit<{ name: string }, AckResult<{ code: string; playerId: string }>>(
+      const created = await emit<{ autopilot: boolean }, AckResult<{ code: string; playerId: string }>>(
         host,
         'create_room',
-        { name: 'Host' }
+        { autopilot: false }
       );
       expect(created.ok).toBe(true);
       if (!created.ok) return;
       const code = created.data.code;
       expect(code).toMatch(/^[A-HJ-NP-Z2-9]{4}$/);
 
-      const aliceJoin = await emit<{ code: string; name: string }, AckResult<{ playerId: string }>>(
+      const aliceJoin = await emit<{ code: string }, AckResult<{ playerId: string }>>(
         alice,
         'join_room',
-        { code, name: 'Alice' }
+        { code }
       );
       expect(aliceJoin.ok).toBe(true);
 
-      const bobJoin = await emit<{ code: string; name: string }, AckResult<{ playerId: string }>>(
+      const bobJoin = await emit<{ code: string }, AckResult<{ playerId: string }>>(
         bob,
         'join_room',
-        { code, name: 'Bob' }
+        { code }
       );
       expect(bobJoin.ok).toBe(true);
 
@@ -144,9 +126,9 @@ describe('lobby flow over real sockets', () => {
 
       const fullLobby = await watcher.waitFor((s) => s.players.length === 3);
       expect(fullLobby.phase).toBe('lobby');
-      expect(fullLobby.players.filter((p) => p.role === 'contestant').map((p) => p.name).sort()).toEqual(
-        ['Alice', 'Bob']
-      );
+      expect(
+        fullLobby.players.filter((p) => p.role === 'contestant').map((p) => p.name).sort()
+      ).toEqual([u.alice.username, u.bob.username].sort());
 
       const started = await emit<{ code: string }, AckResult>(host, 'start_game', { code });
       expect(started.ok).toBe(true);
@@ -159,14 +141,13 @@ describe('lobby flow over real sockets', () => {
   });
 
   it('rejects join with unknown code', async () => {
-    const c = connect();
+    const late = await registerUser(port, 'late');
+    const c = connectAuthed(port, late.token);
     try {
       await awaitConnected(c);
-      const res = await emit<{ code: string; name: string }, AckResult<{ playerId: string }>>(
-        c,
-        'join_room',
-        { code: 'XXXX', name: 'Late' }
-      );
+      const res = await emit<{ code: string }, AckResult<{ playerId: string }>>(c, 'join_room', {
+        code: 'XXXX',
+      });
       expect(res.ok).toBe(false);
       if (!res.ok) expect(res.error).toMatch(/not found/i);
     } finally {
@@ -175,17 +156,18 @@ describe('lobby flow over real sockets', () => {
   });
 
   it('rejects start with only one contestant', async () => {
-    const host = connect();
-    const alice = connect();
+    const u = await trio();
+    const host = connectAuthed(port, u.host.token);
+    const alice = connectAuthed(port, u.alice.token);
     try {
       await Promise.all([awaitConnected(host), awaitConnected(alice)]);
-      const created = await emit<{ name: string }, AckResult<{ code: string; playerId: string }>>(
+      const created = await emit<{ autopilot: boolean }, AckResult<{ code: string; playerId: string }>>(
         host,
         'create_room',
-        { name: 'Host' }
+        { autopilot: false }
       );
       if (!created.ok) throw new Error(created.error);
-      await emit(alice, 'join_room', { code: created.data.code, name: 'Alice' });
+      await emit(alice, 'join_room', { code: created.data.code });
       const start = await emit<{ code: string }, AckResult>(host, 'start_game', {
         code: created.data.code,
       });
@@ -197,20 +179,21 @@ describe('lobby flow over real sockets', () => {
   });
 
   it('only the host can start', async () => {
-    const host = connect();
-    const alice = connect();
-    const bob = connect();
+    const u = await trio();
+    const host = connectAuthed(port, u.host.token);
+    const alice = connectAuthed(port, u.alice.token);
+    const bob = connectAuthed(port, u.bob.token);
     try {
       await Promise.all([awaitConnected(host), awaitConnected(alice), awaitConnected(bob)]);
-      const created = await emit<{ name: string }, AckResult<{ code: string; playerId: string }>>(
+      const created = await emit<{ autopilot: boolean }, AckResult<{ code: string; playerId: string }>>(
         host,
         'create_room',
-        { name: 'Host' }
+        { autopilot: false }
       );
       if (!created.ok) throw new Error(created.error);
       const code = created.data.code;
-      await emit(alice, 'join_room', { code, name: 'Alice' });
-      await emit(bob, 'join_room', { code, name: 'Bob' });
+      await emit(alice, 'join_room', { code });
+      await emit(bob, 'join_room', { code });
       const start = await emit<{ code: string }, AckResult>(alice, 'start_game', { code });
       expect(start.ok).toBe(false);
       if (!start.ok) expect(start.error).toMatch(/host/i);
@@ -219,18 +202,19 @@ describe('lobby flow over real sockets', () => {
     }
   });
 
-  it('host disconnect tears the room down for everyone', async () => {
-    const host = connect();
-    const alice = connect();
+  it('host disconnect tears the room down after the grace window', async () => {
+    const u = await trio();
+    const host = connectAuthed(port, u.host.token);
+    const alice = connectAuthed(port, u.alice.token);
     try {
       await Promise.all([awaitConnected(host), awaitConnected(alice)]);
-      const created = await emit<{ name: string }, AckResult<{ code: string; playerId: string }>>(
+      const created = await emit<{ autopilot: boolean }, AckResult<{ code: string; playerId: string }>>(
         host,
         'create_room',
-        { name: 'Host' }
+        { autopilot: false }
       );
       if (!created.ok) throw new Error(created.error);
-      await emit(alice, 'join_room', { code: created.data.code, name: 'Alice' });
+      await emit(alice, 'join_room', { code: created.data.code });
 
       const errorPromise = new Promise<string>((resolve) =>
         alice.once('error_event', ({ message }) => resolve(message))
@@ -245,30 +229,43 @@ describe('lobby flow over real sockets', () => {
   });
 
   it('contestant leave updates other players', async () => {
-    const host = connect();
-    const alice = connect();
-    const bob = connect();
+    const u = await trio();
+    const host = connectAuthed(port, u.host.token);
+    const alice = connectAuthed(port, u.alice.token);
+    const bob = connectAuthed(port, u.bob.token);
     try {
       await Promise.all([awaitConnected(host), awaitConnected(alice), awaitConnected(bob)]);
-      const created = await emit<{ name: string }, AckResult<{ code: string; playerId: string }>>(
+      const created = await emit<{ autopilot: boolean }, AckResult<{ code: string; playerId: string }>>(
         host,
         'create_room',
-        { name: 'Host' }
+        { autopilot: false }
       );
       if (!created.ok) throw new Error(created.error);
       const code = created.data.code;
-      await emit(alice, 'join_room', { code, name: 'Alice' });
-      await emit(bob, 'join_room', { code, name: 'Bob' });
+      await emit(alice, 'join_room', { code });
+      await emit(bob, 'join_room', { code });
 
       const watcher = new StateWatcher(host);
       await watcher.waitFor((s) => s.players.length === 3);
 
       alice.disconnect();
       const after = await watcher.waitFor((s) => s.players.length === 2, 3000);
-      expect(after.players.find((p) => p.name === 'Alice')).toBeUndefined();
-      expect(after.players.find((p) => p.name === 'Bob')).toBeDefined();
+      expect(after.players.find((p) => p.name === u.alice.username)).toBeUndefined();
+      expect(after.players.find((p) => p.name === u.bob.username)).toBeDefined();
     } finally {
       await cleanup(host, bob);
+    }
+  });
+
+  it('rejects unauthenticated sockets', async () => {
+    const c = connectAuthed(port, 'garbage.token');
+    try {
+      const err = await new Promise<string>((resolve) => {
+        c.once('error_event', ({ message }) => resolve(message));
+      });
+      expect(err).toMatch(/log in/i);
+    } finally {
+      await cleanup(c);
     }
   });
 });

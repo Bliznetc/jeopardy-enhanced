@@ -7,6 +7,8 @@ import ScorePanel from '../components/ScorePanel';
 import WagerInput from '../components/WagerInput';
 import AnswerInput from '../components/AnswerInput';
 import Timer from '../components/Timer';
+import MobileClue from '../components/MobileClue';
+import { useIsMobile } from '../hooks/useIsMobile';
 
 interface Props {
   room: RoomState;
@@ -61,6 +63,12 @@ export default function ContestantGame({ room, me }: Props) {
 
   const fjMax = Math.max(0, myScore);
 
+  const isMobile = useIsMobile();
+  const buzzerName =
+    room.players.find((p) => p.id === game.buzzedIn || p.id === game.ddPlayer)?.name ?? 'Someone';
+  const mobileClueActive =
+    isMobile && (phase === 'clue_reading' || phase === 'buzz_open' || phase === 'answering');
+
   return (
     <div className="game contestant">
       <header className="game-header">
@@ -91,7 +99,21 @@ export default function ContestantGame({ room, me }: Props) {
         </>
       )}
 
-      {phase === 'clue_reading' && (
+      {mobileClueActive && (
+        <MobileClue
+          game={game}
+          phase={phase}
+          me={me}
+          isBuzzed={isBuzzed}
+          isLocked={isLocked}
+          isDDPicker={isDDPicker}
+          onBuzz={buzz}
+          onAnswer={submitAnswer}
+          buzzerName={buzzerName}
+        />
+      )}
+
+      {!mobileClueActive && phase === 'clue_reading' && (
         <>
           <ClueCard game={game} />
           <div className="banner">
@@ -100,7 +122,7 @@ export default function ContestantGame({ room, me }: Props) {
         </>
       )}
 
-      {phase === 'buzz_open' && (
+      {!mobileClueActive && phase === 'buzz_open' && (
         <>
           <ClueCard game={game} />
           <Timer endsAt={game.buzzTimerEndsAt} totalMs={10000} label="Time to buzz" />
@@ -113,7 +135,7 @@ export default function ContestantGame({ room, me }: Props) {
         </>
       )}
 
-      {phase === 'answering' && (
+      {!mobileClueActive && phase === 'answering' && (
         <>
           <ClueCard game={game} />
           {(isBuzzed || isDDPicker) && (
@@ -123,9 +145,7 @@ export default function ContestantGame({ room, me }: Props) {
             <AnswerInput onSubmit={submitAnswer} placeholder="Your response…" />
           ) : (
             <div className="banner">
-              {room.players.find((p) => p.id === game.buzzedIn || p.id === game.ddPlayer)?.name ??
-                'Someone'}{' '}
-              is answering…
+              {buzzerName} is answering…
             </div>
           )}
         </>

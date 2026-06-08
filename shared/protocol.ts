@@ -134,6 +134,18 @@ export interface HostExtras {
   fjAnswers: Record<string, string>;
 }
 
+// ----- Auth -----
+
+export interface AuthUser {
+  id: number;
+  username: string;
+}
+
+export interface AuthResponse {
+  token: string;
+  user: AuthUser;
+}
+
 // ----- Wire protocol -----
 
 export type AckResult<T = void> =
@@ -142,8 +154,9 @@ export type AckResult<T = void> =
 
 export interface ClientToServerEvents {
   // Lobby
-  create_room: (data: { name: string; autopilot?: boolean }, ack: (res: AckResult<{ code: string; playerId: string }>) => void) => void;
-  join_room: (data: { code: string; name: string }, ack: (res: AckResult<{ playerId: string }>) => void) => void;
+  create_room: (data: { autopilot?: boolean }, ack: (res: AckResult<{ code: string; playerId: string }>) => void) => void;
+  join_room: (data: { code: string }, ack: (res: AckResult<{ playerId: string }>) => void) => void;
+  rejoin_room: (data: { code: string }, ack: (res: AckResult<{ playerId: string }>) => void) => void;
   start_game: (data: { code: string; airDate?: string }, ack: (res: AckResult) => void) => void;
   player_ready: (data: { code: string }, ack: (res: AckResult) => void) => void;
   set_episode_selection: (data: { code: string; airDate: string | null; categories?: string[] }, ack: (res: AckResult) => void) => void;

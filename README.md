@@ -17,11 +17,43 @@ Requires Docker, Node 20+ (or 22+), and `curl`.
 ```sh
 ./scripts/download-dataset.sh   # ~77 MB → ./data/ (gitignored)
 docker compose up -d            # Postgres on localhost:5432, auto-loads the dataset
+cp .env.example .env            # set AUTH_SECRET (and optionally OPENAI_API_KEY)
 npm run install:all             # installs root + server + client deps
 npm run dev                     # boots server (3001) + client (5173) together
 ```
 
 Open <http://localhost:5173> in 3+ tabs (or browsers): one host + 2–4 contestants.
+
+### Accounts
+
+Players now **register / log in** with a username + password before playing
+(passwords are hashed with scrypt; sessions use a signed token stored in
+`localStorage`). Your account is your stable identity: refresh the page or drop
+your connection mid-game and you reconnect to the same seat, score, and host
+role (within a grace window — see `PRESENCE_GRACE_MS`). The displayed name is
+your account username.
+
+### Sounds
+
+The client plays sound effects for buzzes, correct/wrong rulings, Daily Doubles,
+round changes, Final Jeopardy, and game over. Toggle them with the 🔊 button in
+the header. Sounds are synthesized in-browser by default; to use real audio,
+drop CC0 `.mp3` files into `client/public/sounds/` (`buzz.mp3`, `correct.mp3`,
+`wrong.mp3`, `time-up.mp3`, `daily-double.mp3`, `final-think.mp3`,
+`round-start.mp3`, `game-over.mp3`, `select.mp3`).
+
+### On a phone
+
+Contestants on a small/touch screen get a focused fullscreen layout during a
+clue: the clue text up top and a giant Buzz button (with haptic feedback) filling
+the screen.
+
+### Smarter autopilot judging (optional)
+
+In **Autopilot** mode the bot host grades answers. Set `OPENAI_API_KEY` in `.env`
+to have an LLM judge each response (lenient about phrasing/typos); without a key
+it falls back to the built-in fuzzy string matcher. Configure the model with
+`OPENAI_MODEL` (default `gpt-4o-mini`).
 
 ## How to play
 

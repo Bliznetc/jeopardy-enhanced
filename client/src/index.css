@@ -1283,3 +1283,56 @@ button:disabled {
   font-family: monospace;
   font-size: 0.9rem;
 }
+
+/* ============================================================
+   APP BAR / MUTE TOGGLE
+   ============================================================ */
+.app-bar { position: relative; }
+.mute-toggle {
+  position: absolute; top: 0; right: 0;
+  background: rgba(255,255,255,0.06);
+  border: 1px solid rgba(255,255,255,0.12);
+  font-size: 1.1rem; line-height: 1;
+  padding: 0.4rem 0.6rem; border-radius: 10px;
+  box-shadow: none; color: var(--text);
+}
+.mute-toggle:hover:not(:disabled) { filter: none; background: rgba(255,255,255,0.1); }
+
+.account-bar {
+  display: flex; align-items: center; justify-content: flex-end;
+  gap: 0.75rem; font-size: 0.85rem; opacity: 0.8;
+  margin-bottom: 1rem;
+}
+.account-bar strong { color: var(--accent); }
+.account-bar .clear-selection { margin-top: 0; }
+
+/* ============================================================
+   MOBILE FULLSCREEN CLUE / BUZZ
+   ============================================================ */
+.mobile-clue {
+  position: fixed; inset: 0; z-index: 50;
+  display: flex; flex-direction: column; gap: 0.75rem;
+  padding: max(0.75rem, env(safe-area-inset-top)) 0.75rem 0.9rem;
+  background: var(--bg);
+  touch-action: manipulation; user-select: none;
+}
+.mobile-clue-meta {
+  text-transform: uppercase; letter-spacing: 0.1em;
+  font-size: 0.72rem; opacity: 0.6; font-weight: 600; text-align: center;
+}
+.mobile-clue-text {
+  font-family: var(--serif); font-weight: 700;
+  font-size: clamp(1.25rem, 6vw, 2rem); line-height: 1.35; text-align: center;
+  padding: 0.5rem; flex: 0 0 auto;
+}
+.mobile-clue .buzzer { flex: 1 1 auto; min-height: 50dvh; }
+.fs-toggle {
+  position: absolute; top: 0.6rem; right: 0.6rem; z-index: 1;
+  background: rgba(255,255,255,0.08); color: var(--text);
+  border: 1px solid rgba(255,255,255,0.15);
+  padding: 0.25rem 0.55rem; font-size: 1rem; box-shadow: none;
+}
+/* During the focused mobile clue, hide the score panel underneath. */
+@media (max-width: 640px), (pointer: coarse) {
+  .contestant .mobile-clue ~ .score-panel { display: none; }
+}
